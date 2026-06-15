@@ -1,0 +1,32 @@
+# LiteLLM Proxy configuration
+# Run with: litellm --config config.yaml --port 4000
+#
+# Phase 0/1: only the local-fast entry needs to work.
+# Add cloud providers as they are configured.
+
+model_list:
+  - model_name: local-fast
+    litellm_params:
+      model: ollama/qwen3:14b
+      api_base: http://localhost:11434
+
+  - model_name: edge-gemma
+    litellm_params:
+      model: openai/gemma-4-e4b
+      api_base: http://localhost:8080/v1
+    # Requires LiteRT-LM CLI running in server mode on the laptop.
+    # Optional - comment out if not set up yet.
+
+  - model_name: deep-reasoning
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+      api_key: os.environ/ANTHROPIC_API_KEY
+    # Used for "complex" triage results, or when the user opts in.
+
+router_settings:
+  routing_strategy: simple-shuffle
+  fallbacks:
+    - local-fast: ["deep-reasoning"]
+  # If Ollama is unreachable, fall through to Claude rather than
+  # failing the request outright. Inverse fallback (cloud -> local)
+  # can be added once cost/latency tradeoffs are clearer.

@@ -1,0 +1,20 @@
+# Node
+node_modules/
+dist/
+.env
+
+# Flutter
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/build/
+mobile/.pub-cache/
+mobile/.pub/
+
+# Model files (downloaded at runtime, not committed)
+mobile/assets/models/*.litertlm
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store

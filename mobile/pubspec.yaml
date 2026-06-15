@@ -1,0 +1,26 @@
+name: fieldfix_mobile
+description: Mobile app for FieldFix - agentic coding on the go.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  qr_code_scanner: ^1.0.1
+  http: ^1.2.0
+  web_socket_channel: ^2.4.0
+
+  # Phase 2: add the LiteRT-LM Flutter binding here once validated by
+  # the spike in docs/ROADMAP.md Phase 2. Check pub.dev for the
+  # current community package name and version - flagged as
+  # community-maintained in docs/CHALLENGES.md.
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

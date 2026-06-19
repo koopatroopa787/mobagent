@@ -9,12 +9,14 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@fastify/websocket": "^8.3.0",
     "fastify": "^4.28.0",
     "qrcode": "^1.5.3",
     "simple-git": "^3.25.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",
+    "@types/qrcode": "^1.5.5",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0"
   }

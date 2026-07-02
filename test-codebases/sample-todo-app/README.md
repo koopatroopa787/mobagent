@@ -1,15 +1,52 @@
-# Sample Test Codebase
+# sample-todo-app
 
-Phase 1 testing target. Use a small, real todo-app repo here (clone
-one, or scaffold a minimal FastAPI/Flask todo API with a small pytest
-suite) so there is something to break, get a webhook from, and fix.
+Minimal Flask todo API used as the Phase 1 end-to-end test target for
+FieldFix. Small enough that a single-file fix is always realistic.
 
-Requirements for this sample app:
+## Setup
 
-- Small enough that a single-file fix is realistic
-- Has a pytest suite with at least one easily-breakable test (for
-  example, an off-by-one or a wrong comparison operator)
-- Has a GitHub Actions workflow that runs pytest on push
+```
+pip install -r requirements.txt
+flask run        # dev server at http://localhost:5000
+pytest -v        # test suite
+```
 
-Do not use a real project for early testing. The daemon will be
-applying AI-generated diffs and pushing branches.
+## Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | /items | list all items |
+| POST | /items | add item (`{"text": "..."}`) |
+| GET | /items/:id | get one item |
+| PATCH | /items/:id | update text and/or done flag |
+| DELETE | /items/:id | remove item |
+
+## Using this as a FieldFix test target
+
+This directory is a template. For Phase 1 webhook testing, deploy it
+as its own GitHub repo so GitHub Actions can fire `workflow_run` events
+at the daemon. The workflow at `.github/workflows/test.yml` runs
+`pytest` on every push.
+
+**Suggested break for testing the agent loop:**
+
+In `app.py`, change:
+
+```python
+item["done"] = data["done"]
+```
+
+to:
+
+```python
+item["done"] = False   # bug: ignores the requested value
+```
+
+This breaks `test_mark_done` with a clean assertion error on a single
+line, which the agent should propose reverting.
+
+## Notes
+
+- State is in-memory only — resets on restart, intentionally.
+- Item IDs are 1-indexed append-only counters. Gaps form after deletes;
+  the agent's single-file scope means ID reassignment is out of scope.

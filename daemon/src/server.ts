@@ -1,14 +1,24 @@
 import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import QRCode from "qrcode";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { PairingRegistry } from "./pairing/index.js";
-import { AlertStore, parseWorkflowRunPayload } from "./webhooks/github.js";
+import { AlertStore, parseWorkflowRunPayload, fetchJobSummary, extractCandidateFiles } from "./webhooks/github.js";
 import { SyncSession, type Socket } from "./sync/ws.js";
 import { applyTestAndPush } from "./diff/index.js";
 import { DiffStore } from "./diffs/index.js";
 import { runCommand } from "./verify/index.js";
 
 const LITELLM_URL = process.env.LITELLM_PROXY_URL ?? "http://localhost:4000";
+
+// ponytail: HMAC over re-stringified body — correct for GitHub's compact JSON.
+// If mismatches occur, switch to addContentTypeParser rawBody capture.
+function verifyGitHubSig(body: unknown, sig: string | undefined, secret: string): boolean {
+  if (!sig) return false;
+  const expected = `sha256=${createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex")}`;
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 // ponytail: dashboard is an inline template — no static-file plugin, no extra dep
 const DASHBOARD = `<!doctype html><html lang="en">
@@ -160,9 +170,20 @@ export function buildServer() {
 
   // Phase 1: GitHub Actions webhook
   app.post("/webhook/github", async (req, reply) => {
+    const secret = process.env.GITHUB_WEBHOOK_SECRET;
+    if (secret && !verifyGitHubSig(req.body, req.headers["x-hub-signature-256"] as string | undefined, secret)) {
+      reply.status(401); return { error: "invalid signature" };
+    }
     if (req.headers["x-github-event"] !== "workflow_run") { reply.status(204); return; }
     const alert = parseWorkflowRunPayload(req.body);
     if (!alert) { reply.status(204); return; }
+
+    const token = process.env.GITHUB_TOKEN;
+    if (token && alert.raw_log_excerpt) {
+      alert.raw_log_excerpt = await fetchJobSummary(alert.raw_log_excerpt, token);
+      alert.candidate_files = extractCandidateFiles(alert.raw_log_excerpt);
+    }
+
     alerts.add(alert);
     sync.broadcast({ type: "ALERT_NOTIFY", alert_id: alert.id, source: alert.source, summary: `Tests failed: ${alert.workflow} on ${alert.branch}`, raw_log_excerpt: alert.raw_log_excerpt, candidate_files: alert.candidate_files });
     return { received: alert.id };

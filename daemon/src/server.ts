@@ -2,12 +2,15 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import QRCode from "qrcode";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { PairingRegistry } from "./pairing/index.js";
-import { AlertStore, parseWorkflowRunPayload, fetchJobSummary, extractCandidateFiles } from "./webhooks/github.js";
+import { AlertStore, parseWorkflowRunPayload, fetchJobSummary, extractCandidateFiles, type GitHubAlert } from "./webhooks/github.js";
 import { SyncSession, type Socket } from "./sync/ws.js";
 import { applyTestAndPush } from "./diff/index.js";
 import { DiffStore } from "./diffs/index.js";
 import { runCommand } from "./verify/index.js";
+import { proposeFixForAlert } from "./agent/index.js";
 
 const LITELLM_URL = process.env.LITELLM_PROXY_URL ?? "http://localhost:4000";
 
@@ -18,6 +21,23 @@ function verifyGitHubSig(body: unknown, sig: string | undefined, secret: string)
   const expected = `sha256=${createHmac("sha256", secret).update(JSON.stringify(body)).digest("hex")}`;
   const a = Buffer.from(sig), b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// ponytail: dashboard is an inline template — no static-file plugin, no extra dep
+async function readCandidateFiles(repoPath: string, files: string[]): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  await Promise.all(files.map(async (f) => {
+    try { out[f] = await readFile(path.join(repoPath, f), "utf8"); } catch { /* file missing — agent skips */ }
+  }));
+  return out;
+}
+
+async function runAgentForAlert(alert: GitHubAlert, repoPath: string, diffs: DiffStore, sync: SyncSession): Promise<void> {
+  const fileContents = await readCandidateFiles(repoPath, alert.candidate_files);
+  const proposal = await proposeFixForAlert(alert, fileContents);
+  if (!proposal) return;
+  const entry = diffs.add({ alert_id: alert.id, file: proposal.file, diff: proposal.diff, explanation: proposal.explanation, generated_by: "daemon" });
+  sync.broadcast({ type: "FIX_PROPOSAL", alert_id: alert.id, diff_id: entry.id, file: proposal.file, diff: proposal.diff, explanation: proposal.explanation, generated_by: "daemon" });
 }
 
 // ponytail: dashboard is an inline template — no static-file plugin, no extra dep
@@ -40,9 +60,20 @@ summary{cursor:pointer}
 <script>
 const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 async function load(){
-  const ds=await fetch('/diffs').then(r=>r.json()).catch(()=>[]);
-  document.getElementById('ts').textContent=ds.length+' diff(s) · '+new Date().toLocaleTimeString();
-  document.getElementById('root').innerHTML=ds.length===0?'<p>No diffs yet.</p>':ds.map(d=>\`
+  const [ds,as]=await Promise.all([
+    fetch('/diffs').then(r=>r.json()).catch(()=>[]),
+    fetch('/alerts').then(r=>r.json()).catch(()=>[])
+  ]);
+  document.getElementById('ts').textContent=ds.length+' diff(s) · '+as.length+' alert(s) · '+new Date().toLocaleTimeString();
+  const withDiff=new Set(ds.map(d=>d.alert_id));
+  const alertCards=as.filter(a=>!withDiff.has(a.id)).map(a=>\`
+    <div class="card applying">
+      <b>\${esc(a.workflow)} on \${esc(a.branch)}</b>
+      <span style="float:right;color:#888">generating fix... \${new Date(a.received_at).toLocaleTimeString()}</span>
+      \${a.raw_log_excerpt?'<pre>'+esc(a.raw_log_excerpt)+'</pre>':''}
+      \${a.candidate_files?.length?'<small>Candidates: '+esc(a.candidate_files.join(', '))+'</small>':''}
+    </div>\`).join('');
+  const diffCards=ds.map(d=>\`
     <div class="card \${d.status}">
       <b>\${esc(d.file)}</b>
       <span style="float:right;color:#888">\${d.status} · \${d.generated_by} · \${new Date(d.created_at).toLocaleTimeString()}</span>
@@ -53,6 +84,7 @@ async function load(){
         ?'<button onclick="act(\''+d.id+'\',\'approve\')">Approve</button><button onclick="act(\''+d.id+'\',\'reject\')">Reject</button>'
         :d.branch?'<small>Branch: '+esc(d.branch)+'</small>':''}
     </div>\`).join('');
+  document.getElementById('root').innerHTML=alertCards+diffCards||'<p>No activity yet.</p>';
 }
 async function act(id,a){await fetch('/diffs/'+id+'/'+a,{method:'POST'});load();}
 setInterval(load,3000);load();
@@ -135,6 +167,7 @@ export function buildServer() {
     }
   );
 
+  app.get("/alerts", async () => alerts.pending());
   app.get("/diffs", async () => diffs.list());
 
   // Dashboard approve: apply diff, run tests, push branch on pass
@@ -186,6 +219,12 @@ export function buildServer() {
 
     alerts.add(alert);
     sync.broadcast({ type: "ALERT_NOTIFY", alert_id: alert.id, source: alert.source, summary: `Tests failed: ${alert.workflow} on ${alert.branch}`, raw_log_excerpt: alert.raw_log_excerpt, candidate_files: alert.candidate_files });
+
+    const repoPath = process.env.REPO_PATH ?? "";
+    if (repoPath) {
+      runAgentForAlert(alert, repoPath, diffs, sync).catch((e: unknown) => app.log.error(e, "agent proposal failed"));
+    }
+
     return { received: alert.id };
   });
 

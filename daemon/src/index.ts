@@ -1,18 +1,18 @@
-// Entry point for the FieldFix daemon.
-//
-// Phase 0: starts the Fastify server and a placeholder
-// /test-completion route that forwards to LiteLLM.
-//
-// See docs/ROADMAP.md Phase 0 for what to build here first.
-
 import { buildServer } from "./server.js";
 
+const port = parseInt(process.env.PAIRING_PORT ?? "7890", 10);
 const server = buildServer();
 
-server.listen({ port: 7890 }, (err, address) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log(`FieldFix daemon listening at ${address}`);
+const shutdown = async () => {
+  await server.close();
+  process.exit(0);
+};
+process.once("SIGTERM", () => void shutdown());
+process.once("SIGINT",  () => void shutdown());
+
+server.listen({ port, host: "0.0.0.0" }, (err) => {
+  if (err) { console.error(err); process.exit(1); }
+  console.log(`FieldFix daemon listening on http://0.0.0.0:${port}`);
+  console.log(`  Dashboard : http://localhost:${port}/`);
+  console.log(`  Pair phone: http://localhost:${port}/pair`);
 });

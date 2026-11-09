@@ -13,6 +13,7 @@ export function runCommand(cmdLine: string, cwd: string): Promise<RunResult> {
     const chunks: Buffer[] = [];
     proc.stdout.on("data", (d: Buffer) => chunks.push(d));
     proc.stderr.on("data", (d: Buffer) => chunks.push(d));
+    proc.on("error", (err: Error) => chunks.push(Buffer.from(err.message)));
     proc.on("close", (code: number | null) => {
       resolve({ passed: code === 0, output: Buffer.concat(chunks).toString(), exit_code: code ?? 1 });
     });
